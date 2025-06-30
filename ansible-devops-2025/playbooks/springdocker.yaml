@@ -1,0 +1,72 @@
+---
+- hosts: all
+  tasks:
+
+    - name: Check if Docker is installed
+      shell: docker --version && docker compose version
+      register: docker_version_result
+      ignore_errors: true
+
+    - name: Set Docker installed fact
+      set_fact:
+        docker_installed: "{{ docker_version_result.rc == 0 }}"
+
+    - name: Include Docker if Docker is not installed
+      include_tasks: docker.yaml
+      when: not docker_installed
+
+    - name: "Clone the Spring repository"
+      git:
+        repo: "https://github.com/AndreasMastro/rentEstate.git"
+        dest: "{{ appdir }}"
+        version: "{{ branch }}"
+        force: yes
+
+    - name: "Populate application.properties"
+      lineinfile:
+        dest: "{{ appdir }}/rentestatefinal-master/src/main/resources/application.properties"
+        state: present
+        regexp: "^{{item.key}}="
+        line: "{{item.key}}={{item.value}}"
+      with_items:
+        - { key: 'server.port', value: '8081' }
+        - { key: 'spring.datasource.username', value: 'myuser'}
+        - { key: 'spring.datasource.password', value: 'pass12345'}
+        - { key: 'spring.datasource.url', value: 'jdbc:postgresql://localhost:5432/mydb' }
+
+    - name: "Add email configuration to application.properties"
+      lineinfile:
+        dest: "{{ appdir }}/rentestatefinal-master/src/main/resources/application.properties"
+        state: present
+        regexp: "^{{item.key}}="
+        line: "{{item.key}}={{item.value}}"
+      with_items:
+        - { key: 'spring.mail.host', value: 'mailhog' }
+        - { key: 'spring.mail.port', value: '1025' }
+        - { key: 'spring.mail.username', value: '' }
+        - { key: 'spring.mail.password', value: '' }
+        - { key: 'spring.mail.properties.mail.smtp.auth', value: 'false' }
+        - { key: 'spring.mail.properties.mail.smtp.starttls.enable', value: 'false' }
+        - { key: 'spring.mail.properties.mail.smtp.starttls.required', value: 'false' }
+
+    - name: Tear down existing services
+      community.docker.docker_compose_v2:
+        project_src: "{{ appdir }}/rentestatefinal-master"
+        state: absent
+
+    - name: Create and start services
+      community.docker.docker_compose_v2:
+        project_src: "{{ appdir }}/rentestatefinal-master"
+        build: always
+        state: present
+      register: output
+      notify: Restart Docker Compose
+
+    - debug:
+        var: output
+
+  handlers:
+  - name: Restart Docker Compose
+    community.docker.docker_compose_v2:
+      project_src: "{{ appdir }}/rentestatefinal-master"
+      state: restarted

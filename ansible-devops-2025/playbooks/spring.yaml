@@ -1,0 +1,258 @@
+---
+- hosts: all
+
+  pre_tasks:
+    - name: Install Java
+      apt:
+        name: openjdk-21-jdk
+        state: present
+        update_cache: yes
+      become: yes
+
+    - name: Install Maven
+      apt:
+        name: maven
+        state: present
+        update_cache: yes
+      become: yes
+
+    - name: Install curl for health checks
+      apt:
+        name: curl
+        state: present
+        update_cache: yes
+      become: yes
+
+  tasks:
+    - name: Debug appdir
+      ansible.builtin.debug:
+        msg: "appdir {{ appdir }}"
+
+    - name: Clone the Spring repository
+      git:
+        repo: "https://github.com/AndreasMastro/rentEstate.git"
+        dest: "{{ appdir }}"
+        version: "{{ branch | default('master') }}"
+        force: yes
+
+    - name: Populate application.properties with database config
+      lineinfile:
+        dest: "{{ appdir }}/rentestatefinal-master/src/main/resources/application.properties"
+        state: present
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+      with_items:
+        - { key: 'server.port', value: '8081' }
+        - { key: 'spring.datasource.username', value: 'myuser'}
+        - { key: 'spring.datasource.password', value: 'pass12345'}
+        - { key: 'spring.datasource.url', value: 'jdbc:postgresql://localhost:5432/mydb' }
+
+    - name: Add email configuration to application.properties 
+      lineinfile:
+        dest: "{{ appdir }}/rentestatefinal-master/src/main/resources/application.properties"
+        state: present
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+      with_items:
+        - { key: 'spring.mail.host', value: 'localhost' }
+        - { key: 'spring.mail.port', value: '1025' }
+        - { key: 'spring.mail.username', value: '' }
+        - { key: 'spring.mail.password', value: '' }
+        - { key: 'spring.mail.properties.mail.smtp.auth', value: 'false' }
+        - { key: 'spring.mail.properties.mail.smtp.starttls.enable', value: 'false' }
+        - { key: 'spring.mail.properties.mail.smtp.starttls.required', value: 'false' }
+
+    - name: Install and configure MailHog for email testing
+      block:
+        - name: Create MailHog user
+          user:
+            name: mailhog
+            system: yes
+            shell: /bin/false
+            home: /var/lib/mailhog
+            create_home: yes
+          become: yes
+
+        - name: Download MailHog binary
+          get_url:
+            url: https://github.com/mailhog/MailHog/releases/download/v1.0.1/MailHog_linux_amd64
+            dest: /usr/local/bin/mailhog
+            mode: '0755'
+            owner: root
+            group: root
+          become: yes
+
+        - name: Create MailHog systemd service
+          copy:
+            content: |
+              [Unit]
+              Description=MailHog Email Testing Tool
+              After=network.target
+
+              [Service]
+              Type=simple
+              User=mailhog
+              Group=mailhog
+              ExecStart=/usr/local/bin/mailhog -smtp-bind-addr=0.0.0.0:1025 -ui-bind-addr=0.0.0.0:8025
+              Restart=always
+              RestartSec=3
+
+              [Install]
+              WantedBy=multi-user.target
+            dest: /etc/systemd/system/mailhog.service
+          become: yes
+          notify: restart mailhog
+
+        - name: Start and enable MailHog service
+          systemd:
+            name: mailhog
+            state: started
+            enabled: yes
+            daemon_reload: yes
+          become: yes
+
+    - name: Build the Spring application using Maven
+      command: mvn package -Dmaven.test.skip
+      args:
+        chdir: "{{ appdir }}/rentestatefinal-master"
+
+    - name: Copy spring service file
+      template:
+        src: ../files/spring.service.j2
+        dest: "/etc/systemd/system/spring.service"
+      become: yes
+      notify: restart spring
+
+    - name: Reload spring service
+      service:
+        name: spring
+        state: restarted
+      become: yes
+
+    - name: Ensure spring service started and enabled
+      service:
+        name: spring
+        state: started
+        enabled: yes
+      become: yes
+
+    - name: Install nginx
+      apt:
+        name: nginx
+        update_cache: yes
+      become: yes
+
+    - name: Copy nginx conf file
+      template:
+        src: ../files/nginx.http.j2
+        dest: "/etc/nginx/sites-available/spring"
+      become: yes
+
+    - name: Enable spring site in nginx
+      file:
+        src: "/etc/nginx/sites-available/spring"
+        dest: "/etc/nginx/sites-enabled/spring"
+        state: link
+      become: yes
+      notify: restart nginx
+
+    - name: Create nginx config for MailHog
+      copy:
+        content: |
+          server {
+              listen 8025;
+              server_name _;
+              
+              location / {
+                  proxy_pass http://localhost:8025;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+          }
+        dest: "/etc/nginx/sites-available/mailhog"
+      become: yes
+
+    - name: Enable MailHog site in nginx
+      file:
+        src: "/etc/nginx/sites-available/mailhog"
+        dest: "/etc/nginx/sites-enabled/mailhog"
+        state: link
+      become: yes
+      notify: restart nginx
+
+    - name: Deactivate default nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      become: yes
+      notify: restart nginx
+
+    - name: Wait for MailHog to be ready
+      wait_for:
+        port: "{{ item }}"
+        host: localhost
+        delay: 5
+        timeout: 60
+      loop:
+        - 1025  # SMTP
+        - 8025  # Web interface
+
+    - name: Wait for Spring application to be ready
+      wait_for:
+        port: 8081
+        host: localhost
+        delay: 10
+        timeout: 120
+
+    - name: Check if MailHog web interface is accessible
+      uri:
+        url: "http://localhost:8025"
+        method: GET
+        status_code: 200
+      register: mailhog_check
+      retries: 5
+      delay: 10
+      ignore_errors: yes
+
+    - name: Check if Spring application health endpoint is accessible
+      uri:
+        url: "http://localhost:8081/actuator/health"
+        method: GET
+        status_code: 200
+      register: spring_health
+      retries: 5
+      delay: 10
+      ignore_errors: yes
+
+    - name: Display service status
+      debug:
+        msg: |
+          Services Status (Non-Docker):
+          - Spring App: {{ 'OK' if spring_health.status == 200 else 'FAILED' }}
+          - MailHog: {{ 'OK' if mailhog_check.status == 200 else 'FAILED' }}
+          
+          Access URLs:
+          - Application: http://{{ ansible_default_ipv4.address }}:8081
+          - MailHog Interface: http://{{ ansible_default_ipv4.address }}:8025
+
+  handlers:
+    - name: restart spring
+      service:
+        name: spring
+        state: restarted
+      become: yes
+
+    - name: restart mailhog
+      systemd:
+        name: mailhog
+        state: restarted
+        daemon_reload: yes
+      become: yes
+
+    - name: restart nginx
+      service:
+        name: nginx
+        state: restarted
+      become: yes
