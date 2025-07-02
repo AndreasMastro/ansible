@@ -41,6 +41,13 @@
      
         
       - block:
+
+        - name: ensure postgresql service is started
+          service:
+            name: postgresql
+            state: started
+          become: yes
+
         - name: create postgres user
           postgresql_user:
             name: "myuser"
@@ -68,6 +75,12 @@
             - install
 
         always:
+          - name: ensure postgresql service is started
+            service:
+              name: postgresql
+              state: started
+            become: yes
+            
           - name: create postgres user
             postgresql_user:
               name: "myuser"
