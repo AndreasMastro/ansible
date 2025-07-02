@@ -22,6 +22,20 @@
         state: present
         update_cache: yes
       become: yes
+      
+    - name: Ensure PostgreSQL is started and enabled
+      service:
+        name: postgresql
+        state: started
+        enabled: yes
+      become: yes
+
+    - name: Wait for PostgreSQL to be ready
+      wait_for:
+        port: 5432
+        host: localhost
+        delay: 5
+        timeout: 60
 
   tasks:
     - name: Debug appdir
