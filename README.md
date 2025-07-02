@@ -3,6 +3,7 @@
 2) Να υπάρχει το αρχείο id_devops με το group az-devops που να έχει μέσα το ip του μηχανήματος 135.225.132.230
    
 Βήματα εκτέλεσης:
+(Για να κάνουμε εκτελέσουμε το spring-docker.yaml και τρέξει η εφαρμογή χρειάζεται να σταματήσουμε το spring.service, postgresql και mailhog για να τα απελευθερώσουμε!)
 
 ```
 myubuntu@DESKTOP-CV4CP4M:~/ansible-devops-2025/ansible/ansible-devops-2025$ ansible-playbook playbooks/spring.yaml -l devops-vm-1
