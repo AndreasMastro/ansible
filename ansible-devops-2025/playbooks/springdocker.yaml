@@ -34,6 +34,7 @@
         - { key: 'spring.datasource.username', value: 'myuser'}
         - { key: 'spring.datasource.password', value: 'pass12345'}
         - { key: 'spring.datasource.url', value: 'jdbc:postgresql://localhost:5432/mydb' }
+      become: yes
 
     - name: "Add email configuration to application.properties"
       lineinfile:
