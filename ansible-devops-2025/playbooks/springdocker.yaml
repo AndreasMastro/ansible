@@ -21,6 +21,7 @@
         dest: "{{ appdir }}"
         version: "{{ branch }}"
         force: yes
+      become: yes
 
     - name: "Populate application.properties"
       lineinfile:
