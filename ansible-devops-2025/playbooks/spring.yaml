@@ -22,7 +22,17 @@
         state: present
         update_cache: yes
       become: yes
-      
+
+    - name: Check if PostgreSQL is installed
+      command: psql --version
+      register: postgres_check
+      failed_when: false
+      changed_when: false
+
+    - name: Include postgres-16.yaml if PostgreSQL is not installed
+      include_tasks: postgres-16.yaml
+      when: postgres_check.rc != 0
+
     - name: Ensure PostgreSQL is started and enabled
       service:
         name: postgresql
